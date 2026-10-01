@@ -139,7 +139,25 @@ def build_search_text(document: dict[str, Any]) -> str:
     Embedding only the title may lose important meaning. Embedding title,
     category, summary, and tags gives the model more context.
     """
-    raise NotImplementedError("TODO: Build searchable text from document fields.")
+    parts = []
+
+    for field in ("title", "category", "summary"):
+        value = str(document.get(field) or "").strip()
+        if value:
+            parts.append(f"Category: {value}" if field == "category" else value)
+
+    tags = document.get("tags") or []
+    if isinstance(tags, str):
+        tags = [tags]
+    tags = [str(tag).strip() for tag in tags if str(tag).strip()]
+    if tags:
+        parts.append("Tags: " + ", ".join(tags))
+
+    search_text = "\n".join(parts)
+    if not search_text:
+        raise ValueError("Document has no searchable text.")
+
+    return search_text
 
 
 def prepare_documents(raw_documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -158,7 +176,31 @@ def prepare_documents(raw_documents: list[dict[str, Any]]) -> list[dict[str, Any
     - ValueError if a required field is missing.
     - ValueError if raw_documents is empty.
     """
-    raise NotImplementedError("TODO: Validate and prepare documents.")
+    if not isinstance(raw_documents, list):
+        raise ValueError("raw_documents must be a list of documents.")
+    if not raw_documents:
+        raise ValueError("raw_documents must not be empty.")
+
+    prepared_documents = []
+    for index, document in enumerate(raw_documents):
+        if not isinstance(document, dict):
+            raise ValueError(f"Document at index {index} must be a dictionary.")
+
+        missing_fields = [
+            field for field in REQUIRED_DOCUMENT_FIELDS if field not in document
+        ]
+        if missing_fields:
+            raise ValueError(
+                f"Document at index {index} is missing required field(s): "
+                f"{', '.join(missing_fields)}"
+            )
+
+        prepared = dict(document)
+        prepared["tags"] = list(document.get("tags") or [])
+        prepared["text"] = build_search_text(document)
+        prepared_documents.append(prepared)
+
+    return prepared_documents
 
 
 def cosine_similarity(vector_a: list[float], vector_b: list[float]) -> float:
@@ -174,7 +216,20 @@ def cosine_similarity(vector_a: list[float], vector_b: list[float]) -> float:
 
     Do not use numpy for this lab. Implement the math with basic Python.
     """
-    raise NotImplementedError("TODO: Compute cosine similarity.")
+    if len(vector_a) != len(vector_b):
+        raise ValueError(
+            "Vectors must have the same dimensions: "
+            f"{len(vector_a)} != {len(vector_b)}"
+        )
+
+    dot_product = sum(a * b for a, b in zip(vector_a, vector_b))
+    magnitude_a = sum(a * a for a in vector_a) ** 0.5
+    magnitude_b = sum(b * b for b in vector_b) ** 0.5
+
+    if magnitude_a == 0 or magnitude_b == 0:
+        return 0.0
+
+    return float(dot_product / (magnitude_a * magnitude_b))
 
 
 def embed_documents(
@@ -193,7 +248,16 @@ def embed_documents(
 
     Do not mutate the input documents.
     """
-    raise NotImplementedError("TODO: Embed each prepared document.")
+    embedded_documents = []
+    for document in prepared_documents:
+        if "text" not in document:
+            raise ValueError("Documents must be prepared before embedding.")
+
+        embedded = dict(document)
+        embedded["embedding"] = list(embedding_model.embed(document["text"]))
+        embedded_documents.append(embedded)
+
+    return embedded_documents
 
 
 def rank_documents(
@@ -225,7 +289,25 @@ def rank_documents(
             "score": 0.87
         }
     """
-    raise NotImplementedError("TODO: Rank documents by query similarity.")
+    if not isinstance(query, str) or not query.strip():
+        raise ValueError("query must be a non-empty string.")
+    if isinstance(top_k, bool) or not isinstance(top_k, int) or top_k <= 0:
+        raise ValueError("top_k must be a positive integer.")
+
+    query_embedding = embedding_model.embed(query)
+
+    results = []
+    for document in embedded_documents:
+        result = {
+            key: value
+            for key, value in document.items()
+            if key not in ("embedding", "text")
+        }
+        result["score"] = cosine_similarity(query_embedding, document["embedding"])
+        results.append(result)
+
+    results.sort(key=lambda result: result["score"], reverse=True)
+    return results[:top_k]
 
 
 def semantic_search(
@@ -247,7 +329,9 @@ def semantic_search(
 
     This function should orchestrate the smaller helper functions.
     """
-    raise NotImplementedError("TODO: Run the full semantic search workflow.")
+    prepared_documents = prepare_documents(raw_documents)
+    embedded_documents = embed_documents(prepared_documents, embedding_model)
+    return rank_documents(query, embedded_documents, embedding_model, top_k=top_k)
 
 
 def main() -> None:
